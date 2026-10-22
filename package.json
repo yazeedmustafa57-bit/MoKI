@@ -1,0 +1,37 @@
+{
+  "name": "victor-ai-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Victor AI Assistant – responsive assistant dashboard with ElevenLabs and Zadarma integrations",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"node --watch server/index.js\" \"vite --config client/vite.config.js\"",
+    "build": "vite build --config client/vite.config.js",
+    "start": "node server/index.js",
+    "test": "node --test --test-concurrency=1 tests/api.test.js",
+    "pretest:ui": "npm run build",
+    "test:ui": "node --test --test-concurrency=1 tests/ui.test.js",
+    "test:all": "npm test && npm run test:ui"
+  },
+  "dependencies": {
+    "@elevenlabs/client": "^1.30.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.22.3",
+    "helmet": "^8.3.0",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.2.1",
+    "playwright": "1.64.1",
+    "vite": "^8.3.5"
+  }
+}
