@@ -84,8 +84,8 @@ export function setSessionCookie(res, token, expiresAt, secure) {
   });
 }
 
-export function clearSessionCookie(res) {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', path: '/' });
+export function clearSessionCookie(res, secure = false) {
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', secure, path: '/' });
 }
 
 export function sessionMiddleware(db) {

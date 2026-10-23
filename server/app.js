@@ -74,6 +74,11 @@ export function createApp(options = {}) {
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
   app.use(originCheck);
   app.use(sessionMiddleware(db));
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    next();
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({

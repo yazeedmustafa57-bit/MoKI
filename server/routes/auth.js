@@ -1,8 +1,10 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import {
   clearSessionCookie,
   createSession,
+  hashPassword,
   publicUser,
   requireAuth,
   setSessionCookie,
@@ -23,6 +25,13 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Passwort ist erforderlich.').max(200),
   remember: z.boolean().optional().default(true),
 });
+
+let dummyPasswordHashPromise;
+
+function getDummyPasswordHash() {
+  dummyPasswordHashPromise ??= hashPassword(crypto.randomBytes(32).toString('hex'));
+  return dummyPasswordHashPromise;
+}
 
 export function authRouter({ db, config, rateLimiter }) {
   const router = Router();
@@ -72,7 +81,8 @@ export function authRouter({ db, config, rateLimiter }) {
       }
 
       const user = db.prepare("SELECT * FROM users WHERE email = ? AND role = 'owner'").get(body.email);
-      const valid = user ? await verifyPassword(body.password, user.password_hash) : false;
+      const passwordHash = user?.password_hash ?? (await getDummyPasswordHash());
+      const valid = await verifyPassword(body.password, passwordHash);
       if (!valid) {
         rateLimiter.fail(ipKey);
         rateLimiter.fail(emailKey);
@@ -99,7 +109,7 @@ export function authRouter({ db, config, rateLimiter }) {
     if (req.sessionHash) {
       db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(req.sessionHash);
     }
-    clearSessionCookie(res);
+    clearSessionCookie(res, config.cookieSecure);
     res.json({ authenticated: false });
   });
 

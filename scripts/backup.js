@@ -4,15 +4,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../server/config.js';
 
+function bool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
 const config = loadConfig();
 const source = config.dbFile;
 if (!fs.existsSync(source)) {
   console.error(`Datenbank nicht gefunden: ${source}`);
   process.exit(1);
 }
+const requireOffsite = bool(process.env.BACKUP_REQUIRE_OFFSITE, false);
 
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 const root = path.resolve(process.env.BACKUP_DIR || config.backupDir);
+fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+const sameFilesystem =
+  fs.statSync(root).dev === fs.statSync(path.dirname(source)).dev;
+if (requireOffsite && sameFilesystem) {
+  console.error(
+    `BACKUP_REQUIRE_OFFSITE ist aktiv, aber BACKUP_DIR liegt auf demselben Dateisystem wie DATA_DIR: ${root}`,
+  );
+  process.exit(1);
+}
+
 const targetDir = path.join(root, stamp);
 fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
 fs.chmodSync(targetDir, 0o700);
@@ -91,8 +107,7 @@ const manifest = {
   copied,
   configFiles: copiedConfig,
   keySource: config.secretsKey ? 'environment' : copied.secretsKey ? 'file' : 'none',
-  sameFilesystem:
-    fs.statSync(targetDir).dev === fs.statSync(path.dirname(source)).dev,
+  sameFilesystem,
   restore:
     'Server stoppen, victor.db nach DATA_DIR kopieren, secrets.key nach SECRETS_KEY_FILE, env.backup als .env nur bei Bedarf, config/ nach Projektkonfiguration nur nach Prüfung. Vorherigen Stand sichern.',
 };

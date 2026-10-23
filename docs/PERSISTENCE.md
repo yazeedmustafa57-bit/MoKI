@@ -178,3 +178,14 @@ Nicht abgedeckt:
 - Die neue per-Call-Berechtigungslogik und die gehärtete Remote-Prompt-Fassung wurden mit sechs textuellen Provider-Simulationen geprüft, aber nicht durch einen weiteren echten Anruf. Die realen Calls `2122f3f1-…` und `bed831a6-…` liefen noch mit dem alten Prompt und dem alten Kontext ohne Berechtigungsflags.
 - Prompt-Backups liegen unter `data/private/` und sind nicht Bestandteil des DB-Backups. Sie enthalten den Owner-Namen; keine Telefonnummer/Adresse. Der Live-Prompt enthält denselben Owner-Namen und wurde als produktive Agent-Konfiguration nicht verändert.
 - Die Backups liegen weiterhin auf demselben Dateisystem (`sameFilesystem=true`).
+
+## Recovery Phase 1 (2026-10-23, Branch `recovery/checkpoint-2-security`)
+
+- Der Quellcode aus `ecca97b` ist auf dem Recovery-Branch vollständig vorhanden; die Sicherheitsverbesserungen aus `36c2595` wurden portiert.
+- Eine alte SQLite-Datenbank mit 21 Anrufen wurde auf dieser Instanz nicht gefunden. Die früheren Daten bleiben verloren, bis ein externes Backup vorliegt.
+- Die Recovery-Version läuft nur als Preview auf `127.0.0.1:3102` mit `/home/runner/victor-preview-data`, `PREVIEW_MODE=true` und `ALLOW_LIVE_CALLS=false`.
+- Neue Prüfungen:
+  - `npm run check:persistence` prüft, ob `DATA_DIR` und `BACKUP_DIR` auf unterschiedlichen Dateisystemen liegen.
+  - `BACKUP_REQUIRE_OFFSITE=true npm run backup` bricht ab, wenn das Backup-Ziel auf demselben Dateisystem liegt.
+- Hosting: `TRUST_PROXY` akzeptiert jetzt eine Hop-Anzahl (`1`) statt `true`; `COOKIE_SECURE=true` bleibt für HTTPS erforderlich.
+- Die Produktionswebsite wurde nicht auf den Recovery-Branch umgestellt. Die OMGithub-Laufzeit startete den bestehenden Produktionsprozess am 2026-10-23 um 11:39:06 automatisch neu; die Produktionsdatenbank blieb unverändert.

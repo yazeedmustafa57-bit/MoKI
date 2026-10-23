@@ -632,6 +632,7 @@ test('Victor AI Assistant – API integration flow', async (t) => {
       const health = await request('/api/health');
       assert.equal(health.status, 200);
       assert.equal(health.data.status, 'ok');
+      assert.equal(health.response.headers.get('cache-control'), 'no-store');
 
       const status = await request('/api/auth/status');
       assert.equal(status.status, 200);
@@ -639,6 +640,7 @@ test('Victor AI Assistant – API integration flow', async (t) => {
       assert.equal(status.data.setupDisabled, true);
       assert.equal(status.data.authenticated, false);
       assert.equal(status.data.user, null);
+      assert.equal(status.response.headers.get('cache-control'), 'no-store');
     });
 
     await t.test('public setup endpoint is permanently disabled', async () => {
@@ -675,6 +677,14 @@ test('Victor AI Assistant – API integration flow', async (t) => {
         body: { name: 'Zweiter', email: 'second@example.com', password: 'Zweites-Passwort-123!' },
       });
       assert.equal(registration.status, 404);
+
+      const unknown = await request('/api/auth/login', {
+        method: 'POST',
+        body: { email: 'unknown@example.com', password: 'Falsches-Passwort-123!' },
+      });
+      assert.equal(unknown.status, 401);
+      assert.equal(unknown.data.error.code, 'INVALID_CREDENTIALS');
+      assert.equal(unknown.data.error.message, 'E-Mail-Adresse oder Passwort ist nicht korrekt.');
     });
 
     await t.test('all private API endpoints reject unauthenticated requests', async () => {

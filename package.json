@@ -17,6 +17,7 @@
     "test:ui": "node --test --test-concurrency=1 tests/ui.test.js",
     "test:all": "npm test && npm run test:ui",
     "backup": "node scripts/backup.js",
+    "check:persistence": "node scripts/check-persistence.js",
     "test:simulation": "node scripts/simulate-call-safety.js"
   },
   "dependencies": {

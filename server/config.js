@@ -15,9 +15,19 @@ function bool(value, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
-function int(value, fallback) {
+function int(value, fallback, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
   const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+function trustProxyHops(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'on'].includes(text)) return 1;
+  if (['false', 'no', 'off'].includes(text)) return false;
+  if (/^\d+$/.test(text)) return Number(text);
+  return fallback;
 }
 
 export function loadConfig(overrides = {}) {
@@ -43,7 +53,7 @@ export function loadConfig(overrides = {}) {
     nodeEnv,
     isProduction: nodeEnv === 'production',
     host: overrides.host ?? process.env.HOST ?? '127.0.0.1',
-    port: overrides.port ?? int(process.env.PORT, 3002),
+    port: overrides.port ?? int(process.env.PORT, 3002, { min: 1, max: 65535 }),
     dataDir,
     dbFile: overrides.dbFile ?? process.env.DB_FILE ?? path.join(dataDir, 'victor.db'),
     allowLiveCalls:
@@ -59,8 +69,8 @@ export function loadConfig(overrides = {}) {
       overrides.backupDir ?? process.env.BACKUP_DIR ?? path.join(dataDir, 'backups'),
     ),
     cookieSecure: overrides.cookieSecure ?? bool(process.env.COOKIE_SECURE, nodeEnv === 'production'),
-    sessionDays: int(process.env.SESSION_DAYS, 7),
-    trustProxy: bool(process.env.TRUST_PROXY, false),
+    sessionDays: int(process.env.SESSION_DAYS, 7, { min: 1, max: 365 }),
+    trustProxy: overrides.trustProxy ?? trustProxyHops(process.env.TRUST_PROXY, false),
     ownerBootstrap: {
       email: ownerBootstrapEmail,
       passwordHash: ownerBootstrapPasswordHash,
