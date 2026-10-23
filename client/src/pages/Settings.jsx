@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Database,
   LoaderCircle,
@@ -32,45 +32,127 @@ export default function Settings() {
   const { applySettings, logout } = useApp();
   const { toast } = useToast();
   const [form, setForm] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState('idle');
   const [saveError, setSaveError] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [requestInFlight, setRequestInFlight] = useState(false);
+  const formRef = useRef(null);
+  const revisionRef = useRef(0);
+  const timerRef = useRef(null);
+  const mountedRef = useRef(true);
+  const initializedRef = useRef(false);
+  const persistRef = useRef(null);
 
   useEffect(() => {
-    if (settingsApi.data?.settings) setForm(settingsApi.data.settings);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+        if (formRef.current) {
+          Promise.resolve(
+            persistRef.current?.(formRef.current, revisionRef.current),
+          ).catch(() => {});
+        }
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsApi.data?.settings) return;
+    const settings = settingsApi.data.settings;
+    formRef.current = settings;
+    setForm(settings);
+    initializedRef.current = true;
+    setSaveState('saved');
+    setLastSavedAt(settings.updatedAt || null);
   }, [settingsApi.data]);
 
-  const changeTheme = (theme) => {
-    setForm((current) => {
-      const next = { ...current, theme };
-      applySettings(next);
-      return next;
-    });
+  const updateForm = (patch) => {
+    const current = formRef.current;
+    if (!current) return;
+    const next = { ...current, ...patch };
+    formRef.current = next;
+    revisionRef.current += 1;
+    setForm(next);
+    setSaveError(null);
+    setSaveState('saving');
   };
 
-  const saveSettings = async (event) => {
-    event.preventDefault();
-    setSaving(true);
-    setSaveError(null);
+  const changeTheme = (theme) => {
+    updateForm({ theme });
+    applySettings({ ...formRef.current, theme });
+  };
+
+  const persist = async (next, revision, { notify = false } = {}) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (mountedRef.current) {
+      setRequestInFlight(true);
+      setSaveState('saving');
+      setSaveError(null);
+    }
     try {
       const data = await api('/account/settings', {
         method: 'PATCH',
         body: {
-          assistantName: form.assistantName,
-          theme: form.theme,
-          emailNotifications: form.emailNotifications,
-          pushNotifications: form.pushNotifications,
-          callRecording: form.callRecording,
+          assistantName: next.assistantName,
+          theme: next.theme,
+          emailNotifications: next.emailNotifications,
+          pushNotifications: next.pushNotifications,
+          callRecording: next.callRecording,
         },
       });
+      if (!mountedRef.current || revision !== revisionRef.current) return;
+      formRef.current = data.settings;
       setForm(data.settings);
       applySettings(data.settings);
-      toast('Einstellungen gespeichert.');
+      setSaveState('saved');
+      setLastSavedAt(data.settings.updatedAt || new Date().toISOString());
+      if (notify) toast('Einstellungen gespeichert.');
     } catch (requestError) {
+      if (!mountedRef.current || revision !== revisionRef.current) return;
+      setSaveState('error');
       setSaveError(requestError.message);
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setRequestInFlight(false);
     }
   };
+
+  persistRef.current = persist;
+
+  useEffect(() => {
+    if (!initializedRef.current || !formRef.current || saveState !== 'saving') return undefined;
+    const next = formRef.current;
+    const revision = revisionRef.current;
+    const timer = setTimeout(() => {
+      timerRef.current = null;
+      persist(next, revision);
+    }, 700);
+    timerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (timerRef.current === timer) timerRef.current = null;
+    };
+  }, [form, saveState]);
+
+  const saveSettings = (event) => {
+    event.preventDefault();
+    if (!formRef.current) return;
+    persist(formRef.current, revisionRef.current, { notify: true });
+  };
+
+  const saveStatusText =
+    saveState === 'saving'
+      ? 'Wird gespeichert …'
+      : saveState === 'saved'
+        ? 'Gespeichert'
+        : saveState === 'error'
+          ? 'Speichern fehlgeschlagen'
+          : 'Noch nicht gespeichert';
 
   if (settingsApi.loading && !settingsApi.data) {
     return <LoadingState label="Einstellungen werden geladen …" />;
@@ -130,9 +212,7 @@ export default function Settings() {
               <input
                 id="assistant-name"
                 value={form.assistantName}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, assistantName: event.target.value }))
-                }
+                onChange={(event) => updateForm({ assistantName: event.target.value })}
                 maxLength={60}
                 required
               />
@@ -146,32 +226,40 @@ export default function Settings() {
                 label="E-Mail-Hinweise"
                 description="Für zukünftige Benachrichtigungsfunktionen vorgemerkt."
                 checked={form.emailNotifications}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, emailNotifications: value }))
-                }
+                onChange={(value) => updateForm({ emailNotifications: value })}
               />
               <Toggle
                 id="push-notifications"
                 label="Push-Hinweise"
                 description="Derzeit nicht aktiv – es ist kein Push-Dienst eingerichtet."
                 checked={form.pushNotifications}
-                onChange={(value) =>
-                  setForm((current) => ({ ...current, pushNotifications: value }))
-                }
+                onChange={(value) => updateForm({ pushNotifications: value })}
               />
               <Toggle
                 id="call-recording"
                 label="Anrufaufzeichnung vormerken"
                 description="Nur eine Präferenz. Es findet aktuell keine automatische Aufzeichnung statt."
                 checked={form.callRecording}
-                onChange={(value) => setForm((current) => ({ ...current, callRecording: value }))}
+                onChange={(value) => updateForm({ callRecording: value })}
               />
             </div>
           </SectionCard>
 
           <div className="form-actions">
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? <LoaderCircle size={16} className="spin" /> : <Save size={16} />}
+            <span
+              className={`save-status save-status-${saveState}`}
+              role="status"
+              aria-live="polite"
+              title={lastSavedAt ? `Zuletzt gespeichert: ${lastSavedAt}` : undefined}
+            >
+              {saveStatusText}
+            </span>
+            <button type="submit" className="btn btn-primary" disabled={requestInFlight}>
+              {requestInFlight ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Save size={16} />
+              )}
               Einstellungen speichern
             </button>
           </div>
@@ -182,9 +270,10 @@ export default function Settings() {
             <div className="data-note">
               <Database size={20} aria-hidden="true" />
               <p>
-                Profil, Kontakte, Aufgaben, Termine, Anrufe und Transkripte liegen in
-                <code>data/victor.db</code>. Die Datei ist von Git ausgeschlossen. Vor einem
-                Backup den Server stoppen und die Datei kopieren.
+                Profil, Kontakte, Aufgaben, Termine, Anrufe, Transkripte und Einstellungen
+                liegen in <code>data/victor.db</code>. Die Datei ist von Git ausgeschlossen.
+                Backups können mit <code>npm run backup</code> erstellt werden; für einen
+                konsistenten Stand nutzt das Skript die SQLite-Sicherung.
               </p>
             </div>
             <p className="muted small">

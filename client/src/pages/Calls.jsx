@@ -5,13 +5,18 @@ import {
   ArrowUpRight,
   CalendarClock,
   CircleAlert,
+  Eye,
   LoaderCircle,
+  MessageSquareText,
   Phone,
   PhoneCall,
   Plus,
+  RefreshCw,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../api.js';
+import ConversationTranscript from '../components/ConversationTranscript.jsx';
 import { Modal } from '../components/Modal.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useApi } from '../hooks/useApi.js';
@@ -25,7 +30,14 @@ import {
 } from '../components/ui.jsx';
 import { formatDateTime, formatDuration } from '../utils/format.js';
 
-const emptyForm = { contactId: '', phone: '', direction: 'outbound', notes: '' };
+const emptyForm = {
+  contactId: '',
+  phone: '',
+  direction: 'outbound',
+  brief: '',
+  bookingAuthorized: false,
+  sharePhone: false,
+};
 
 export default function Calls() {
   const callsApi = useApi('/calls');
@@ -40,16 +52,28 @@ export default function Calls() {
   const [startError, setStartError] = useState(null);
   const [durationMinutes, setDurationMinutes] = useState('');
   const [completeNotes, setCompleteNotes] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const [syncingId, setSyncingId] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
 
   const contacts = contactsApi.data?.contacts || [];
   const calls = callsApi.data?.calls || [];
-  const telephony = integrationsApi.data?.integrations?.find((item) => item.provider === 'zadarma');
-  const canStart = Boolean(telephony?.configured && telephony?.liveCallsEnabled);
+  const telephony = integrationsApi.data?.integrations?.find((item) => item.provider === 'elevenlabs');
+  const canStart = Boolean(
+    telephony?.configured && telephony?.liveCallsEnabled && !telephony?.previewMode,
+  );
+  const canSync = Boolean(telephony?.configured);
 
   const selectedContact = useMemo(
     () => contacts.find((contact) => contact.id === form.contactId) || null,
     [contacts, form.contactId],
   );
+  const activeCall = detail?.call || modal?.call || null;
+  const activeTranscript = detail?.transcripts?.[0] || null;
 
   const openPrepare = () => {
     setForm(emptyForm);
@@ -75,6 +99,94 @@ export default function Calls() {
     setModal(null);
     setFormError(null);
     setStartError(null);
+    setDetail(null);
+    setDetailError(null);
+  };
+
+  const loadDetail = async (callId) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const result = await api(`/calls/${callId}`);
+      setDetail(result);
+    } catch (requestError) {
+      setDetailError(requestError);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const openDetails = (call) => {
+    setDetail(null);
+    setModal({ type: 'details', call });
+    loadDetail(call.id);
+  };
+
+  const syncCall = async (call) => {
+    setSyncingId(call.id);
+    try {
+      const result = await api(`/calls/${call.id}/sync`, { method: 'POST' });
+      toast(
+        result.transcript
+          ? 'Gespräch und Transkript wurden aktualisiert.'
+          : 'Gesprächsstatus wurde aktualisiert. Ein Transkript ist noch nicht verfügbar.',
+      );
+      callsApi.reload();
+      if (modal?.type === 'details') await loadDetail(call.id);
+    } catch (requestError) {
+      toast(requestError.message, 'error');
+    } finally {
+      setSyncingId('');
+    }
+  };
+
+  const openDelete = (call) => {
+    setModal(null);
+    setDetail(null);
+    setDeleteTarget(call);
+  };
+
+  const deleteCall = async () => {
+    if (!deleteTarget) return;
+    setSubmitting(true);
+    try {
+      await api(`/calls/${deleteTarget.id}`, { method: 'DELETE' });
+      toast('Anruf und lokale Transkripte wurden gelöscht.');
+      setDeleteTarget(null);
+      callsApi.reload();
+    } catch (requestError) {
+      toast(requestError.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openDeleteAll = () => {
+    setDeleteConfirmed(false);
+    setDeleteAllOpen(true);
+  };
+
+  const deleteAllCalls = async () => {
+    if (!deleteConfirmed) return;
+    setSubmitting(true);
+    try {
+      const result = await api('/calls', {
+        method: 'DELETE',
+        body: { confirm: true },
+      });
+      toast(
+        result.deletedCount === 1
+          ? 'Die Anrufhistorie wurde gelöscht.'
+          : `${result.deletedCount} Anrufe wurden aus der lokalen Historie gelöscht.`,
+      );
+      setDeleteAllOpen(false);
+      setDeleteConfirmed(false);
+      callsApi.reload();
+    } catch (requestError) {
+      toast(requestError.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const updateContact = (contactId) => {
@@ -97,7 +209,9 @@ export default function Calls() {
           contactId: form.contactId || null,
           phone: form.phone,
           direction: form.direction,
-          notes: form.notes,
+          brief: form.brief,
+          bookingAuthorized: form.bookingAuthorized,
+          sharePhone: form.sharePhone,
         },
       });
       setModal(null);
@@ -160,9 +274,16 @@ export default function Calls() {
         title="Anrufe"
         description="Anrufe werden vorbereitet und erst nach ausdrücklicher Bestätigung gestartet."
         actions={
-          <button type="button" className="btn btn-primary" onClick={openPrepare}>
-            <Plus size={17} /> Anruf vorbereiten
-          </button>
+          <>
+            {calls.length > 0 ? (
+              <button type="button" className="btn btn-danger btn-sm" onClick={openDeleteAll}>
+                <Trash2 size={15} /> Historie löschen
+              </button>
+            ) : null}
+            <button type="button" className="btn btn-primary" onClick={openPrepare}>
+              <Plus size={17} /> Anruf vorbereiten
+            </button>
+          </>
         }
       />
 
@@ -185,8 +306,9 @@ export default function Calls() {
           <div>
             <strong>Live-Anrufe sind freigeschaltet</strong>
             <p>
-              Nach der Bestätigung wird ein echter Anruf über Zadarma angefordert. Der
-              Gesprächsstatus kann nicht automatisch verifiziert werden.
+              Nach der Bestätigung wird ein echter KI-Anruf über ElevenLabs SIP-Outbound
+              angefordert. Status und Transkript werden erst durch eine manuelle
+              Synchronisierung aus der ElevenLabs-Historie übernommen.
             </p>
           </div>
         </div>
@@ -235,7 +357,10 @@ export default function Calls() {
                   </span>
                   <div>
                     <strong>{call.contactName || (call.direction === 'inbound' ? 'Eingehend' : 'Ausgehend')}</strong>
-                    <small>{call.notes || (call.direction === 'inbound' ? 'Eingehender Anruf' : 'Ausgehender Anruf')}</small>
+                    <small>{call.brief || call.notes || (call.direction === 'inbound' ? 'Eingehender Anruf' : 'Ausgehender Anruf')}</small>
+                    {call.brief && call.notes && call.notes !== call.brief ? (
+                      <small>Ergebnis: {call.notes}</small>
+                    ) : null}
                   </div>
                 </div>
                 <span className="mono cell-phone">{call.phone || '–'}</span>
@@ -243,6 +368,12 @@ export default function Calls() {
                 <span className="cell-muted cell-duration">{formatDuration(call.durationSeconds)}</span>
                 <div className="cell-status">
                   <StatusBadge status={call.status} type="call" />
+                  {call.conversationStatus ? (
+                    <StatusBadge status={call.conversationStatus} type="conversation" />
+                  ) : null}
+                  {call.conversationResult && call.conversationResult !== 'unknown' ? (
+                    <StatusBadge status={call.conversationResult} type="result" />
+                  ) : null}
                   {call.errorMessage ? <small className="cell-error">{call.errorMessage}</small> : null}
                 </div>
                 <div className="cell-actions">
@@ -266,12 +397,251 @@ export default function Calls() {
                       <CalendarClock size={14} /> Erledigt
                     </button>
                   ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => openDetails(call)}
+                  >
+                    <Eye size={14} /> Details
+                  </button>
                 </div>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
+
+      <Modal
+        open={modal?.type === 'details'}
+        onClose={closeModal}
+        title={activeCall ? activeCall.contactName || 'Gesprächsdetails' : 'Gesprächsdetails'}
+        description={
+          activeCall ? `${formatDateTime(activeCall.createdAt)} · ${activeCall.phone || 'Keine Nummer'}` : ''
+        }
+        size="lg"
+        footer={
+          <>
+            <button type="button" className="btn btn-secondary" onClick={closeModal}>
+              Schließen
+            </button>
+            {activeCall && activeCall.providerRef ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => syncCall(activeCall)}
+                disabled={!canSync || syncingId === activeCall.id}
+                title={
+                  canSync
+                    ? 'Status und Transkript bei ElevenLabs abrufen'
+                    : 'ElevenLabs ist nicht konfiguriert.'
+                }
+              >
+                {syncingId === activeCall.id ? (
+                  <LoaderCircle size={16} className="spin" />
+                ) : (
+                  <RefreshCw size={16} />
+                )}
+                Synchronisieren
+              </button>
+            ) : null}
+            {activeCall ? (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => openDelete(activeCall)}
+              >
+                <Trash2 size={16} /> Löschen
+              </button>
+            ) : null}
+          </>
+        }
+      >
+        {detailLoading ? <LoadingState label="Gesprächsdetails werden geladen …" compact /> : null}
+        {detailError ? (
+          <ErrorState
+            error={detailError}
+            compact
+            onRetry={() => activeCall && loadDetail(activeCall.id)}
+          />
+        ) : null}
+        {activeCall ? (
+          <div className="conversation-detail">
+            <div className="conversation-status">
+              <div>
+                <small>Technischer Status</small>
+                <StatusBadge status={activeCall.status} type="call" />
+              </div>
+              <div>
+                <small>Anbieterstatus</small>
+                {activeCall.conversationStatus ? (
+                  <StatusBadge status={activeCall.conversationStatus} type="conversation" />
+                ) : (
+                  <span className="muted small">Nicht synchronisiert</span>
+                )}
+              </div>
+              <div>
+                <small>Gesprächsergebnis</small>
+                <StatusBadge status={activeCall.conversationResult} type="result" />
+              </div>
+              <div>
+                <small>Transkript</small>
+                <StatusBadge status={activeCall.transcriptStatus} type="transcript" />
+              </div>
+            </div>
+
+            <dl className="call-facts">
+              <div>
+                <dt>Datum</dt>
+                <dd>{formatDateTime(activeCall.createdAt)}</dd>
+              </div>
+              <div>
+                <dt>Dauer</dt>
+                <dd>{formatDuration(activeCall.durationSeconds)}</dd>
+              </div>
+              <div>
+                <dt>Richtung</dt>
+                <dd>{activeCall.direction === 'inbound' ? 'Eingehend' : 'Ausgehend'}</dd>
+              </div>
+              <div>
+                <dt>Zielnummer</dt>
+                <dd className="mono">{activeCall.phone || '–'}</dd>
+              </div>
+            </dl>
+
+            {activeCall.brief ? (
+              <section className="conversation-section">
+                <h3>Auftrag</h3>
+                <p>{activeCall.brief}</p>
+              </section>
+            ) : null}
+
+            {activeCall.resultSummary || activeTranscript?.summary ? (
+              <section className="conversation-section">
+                <h3>Zusammenfassung</h3>
+                <p>{activeCall.resultSummary || activeTranscript.summary}</p>
+              </section>
+            ) : null}
+
+            {activeCall.terminationReason ? (
+              <section className="conversation-section">
+                <h3>Beendigungsgrund</h3>
+                <p>{activeCall.terminationReason}</p>
+              </section>
+            ) : null}
+
+            {activeCall.notes && activeCall.notes !== activeCall.brief ? (
+              <section className="conversation-section">
+                <h3>Notiz</h3>
+                <p>{activeCall.notes}</p>
+              </section>
+            ) : null}
+
+            <section className="conversation-section">
+              <h3>Transkript</h3>
+              {activeTranscript?.segments?.length > 0 ? (
+                <ConversationTranscript
+                  segments={activeTranscript.segments}
+                  contactName={activeCall.contactName || 'Gesprächspartner'}
+                />
+              ) : activeTranscript?.content ? (
+                <p className="transcript-plain">{activeTranscript.content}</p>
+              ) : (
+                <div className="conversation-empty">
+                  <MessageSquareText size={22} aria-hidden="true" />
+                  <p>
+                    {!activeCall.providerRef
+                      ? 'Für diesen Anruf wurde noch keine ElevenLabs-Konversation hinterlegt.'
+                      : activeCall.transcriptStatus === 'processing' ||
+                          activeCall.transcriptStatus === 'pending'
+                        ? 'Das Transkript wird von ElevenLabs noch verarbeitet. Versuche es später erneut.'
+                        : activeCall.transcriptStatus === 'unavailable'
+                          ? 'ElevenLabs stellt für dieses Gespräch kein Transkript bereit.'
+                          : 'Noch kein Transkript geladen. Synchronisiere den Anruf mit ElevenLabs.'}
+                  </p>
+                  {!canSync && activeCall.providerRef ? (
+                    <p className="field-hint">ElevenLabs ist aktuell nicht konfiguriert.</p>
+                  ) : null}
+                </div>
+              )}
+            </section>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Anruf löschen?"
+        description="Die lokale Anrufhistorie und alle zugehörigen lokalen Transkripte werden dauerhaft entfernt."
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeleteTarget(null)}
+              disabled={submitting}
+            >
+              Abbrechen
+            </button>
+            <button type="button" className="btn btn-danger" onClick={deleteCall} disabled={submitting}>
+              {submitting ? <LoaderCircle size={16} className="spin" /> : <Trash2 size={16} />}
+              Endgültig löschen
+            </button>
+          </>
+        }
+      >
+        <p>
+          „{deleteTarget?.contactName || deleteTarget?.phone || 'Dieser Anruf'}“ wird aus der
+          lokalen Historie entfernt.
+        </p>
+        <p className="field-hint">
+          Beim Anbieter gespeicherte Gesprächsdaten werden dadurch nicht gelöscht.
+        </p>
+      </Modal>
+
+      <Modal
+        open={deleteAllOpen}
+        onClose={() => {
+          if (!submitting) setDeleteAllOpen(false);
+        }}
+        title="Gesamte Anrufhistorie löschen?"
+        description="Alle lokalen Anrufe und zugehörigen Transkripte dieses Kontos werden dauerhaft entfernt."
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setDeleteAllOpen(false)}
+              disabled={submitting}
+            >
+              Abbrechen
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={deleteAllCalls}
+              disabled={!deleteConfirmed || submitting}
+            >
+              {submitting ? <LoaderCircle size={16} className="spin" /> : <Trash2 size={16} />}
+              Historie endgültig löschen
+            </button>
+          </>
+        }
+      >
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={deleteConfirmed}
+            onChange={(event) => setDeleteConfirmed(event.target.checked)}
+          />
+          <span>
+            Ich verstehe, dass die lokale Anrufhistorie dauerhaft gelöscht wird. Daten beim
+            Anbieter bleiben bestehen.
+          </span>
+        </label>
+      </Modal>
 
       <Modal
         open={modal?.type === 'prepare'}
@@ -333,14 +703,60 @@ export default function Calls() {
               <option value="inbound">Eingehend</option>
             </select>
           </Field>
-          <Field label="Notiz" htmlFor="call-notes" className="form-grid-full">
+          <Field
+            label={form.direction === 'outbound' ? 'Auftrag / Gesprächsziel' : 'Notiz'}
+            htmlFor="call-brief"
+            className="form-grid-full"
+          >
             <textarea
-              id="call-notes"
-              rows={3}
-              value={form.notes}
-              onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
-              placeholder="Worum geht es?"
+              id="call-brief"
+              rows={5}
+              value={form.brief}
+              onChange={(event) => setForm((current) => ({ ...current, brief: event.target.value }))}
+              placeholder={
+                form.direction === 'outbound'
+                  ? 'z. B. Ruf meinen Vorgesetzten an und sag ihm, dass ich diese Woche krankgeschrieben bin.'
+                  : 'Worum ging es bei dem Anruf?'
+              }
+              required={form.direction === 'outbound'}
             />
+            {form.direction === 'outbound' ? (
+              <>
+                <p className="field-hint">
+                  Der Assistent erhält diesen Auftrag als Gesprächskontext. Profildaten werden nur
+                  nach ausdrücklicher Freigabe weitergegeben.
+                </p>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={form.bookingAuthorized}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        bookingAuthorized: event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    Terminbuchung ausdrücklich freigegeben. Ohne diese Freigabe fragt Victor nur
+                    nach Verfügbarkeit und bestätigt keinen Termin.
+                  </span>
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={form.sharePhone}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, sharePhone: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    Rückrufnummer für genau diesen Anruf freigeben. Ohne Freigabe nennt Victor
+                    keine Telefonnummer, Adresse oder E-Mail-Adresse.
+                  </span>
+                </label>
+              </>
+            ) : null}
           </Field>
         </form>
       </Modal>
@@ -349,7 +765,7 @@ export default function Calls() {
         open={modal?.type === 'start'}
         onClose={closeModal}
         title="Echten Anruf starten?"
-        description="Diese Aktion fordert einen echten Anruf bei Zadarma an."
+        description="Diese Aktion fordert einen echten KI-Anruf über ElevenLabs SIP-Outbound an."
         size="sm"
         footer={
           <>
@@ -377,6 +793,16 @@ export default function Calls() {
             <p className="mono">{modal?.call?.phone}</p>
           </div>
         </div>
+        {modal?.call?.brief ? (
+          <div className="confirm-brief">
+            <strong>Auftrag</strong>
+            <p>{modal.call.brief}</p>
+            <p className="field-hint">
+              Terminbuchung: {modal.call.bookingAuthorized ? 'ausdrücklich freigegeben' : 'nicht freigegeben'} ·
+              Rückrufnummer: {modal.call.sharePhone ? 'freigegeben' : 'nicht freigegeben'}
+            </p>
+          </div>
+        ) : null}
         <label className="checkbox-row">
           <input
             type="checkbox"

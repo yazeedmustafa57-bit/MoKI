@@ -10,6 +10,14 @@ cd "$PROJECT_DIR"
 PORT="${PORT:-${APP_PORT:-3000}}"
 export PORT
 export HOST="${HOST:-0.0.0.0}"
+PRODUCTION_MODE_FILE="${PRODUCTION_MODE_FILE:-$PROJECT_DIR/config/public-production.env}"
+if [[ -z "${PREVIEW_MODE+x}" && -f "$PRODUCTION_MODE_FILE" ]]; then
+  production_preview_mode="$(sed -n 's/^[[:space:]]*PREVIEW_MODE[[:space:]]*=[[:space:]]*//p' "$PRODUCTION_MODE_FILE" | tail -n 1 | tr -d '[:space:]')"
+  case "$production_preview_mode" in
+    true|false) export PREVIEW_MODE="$production_preview_mode" ;;
+  esac
+fi
+export PREVIEW_MODE="${PREVIEW_MODE:-true}"
 
 WEB_DIR="${OPENCODE_WEB_DIR:-${RUNNER_TEMP:-/tmp}/omgithub-web}"
 DIST_DIR="$PROJECT_DIR/dist"

@@ -82,15 +82,18 @@ export function getAssistantStatus(db, config) {
 
 export function getTelephonyStatus(db, config) {
   const integrations = getIntegrationStatus(db, config);
-  const zadarma = integrations.zadarma;
+  const eleven = integrations.elevenlabs;
+  const configured = Boolean(eleven.outboundConfigured);
   return {
-    provider: 'zadarma',
-    configured: zadarma.configured,
-    verified: zadarma.verified,
-    liveCallsEnabled: zadarma.liveCallsEnabled,
-    sipNumberMasked: zadarma.sipNumberMasked,
-    status: zadarma.status,
-    message: zadarma.message,
-    lastCheckedAt: zadarma.lastCheckedAt,
+    provider: 'elevenlabs',
+    configured,
+    verified: configured && eleven.verified,
+    liveCallsEnabled: Boolean(config.allowLiveCalls),
+    phoneNumberIdMasked: eleven.phoneNumberIdMasked,
+    status: configured ? eleven.status : 'not_configured',
+    message: configured
+      ? eleven.message
+      : 'ElevenLabs SIP-Outbound ist nicht konfiguriert. ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID und ELEVENLABS_PHONE_NUMBER_ID fehlen.',
+    lastCheckedAt: configured ? eleven.lastCheckedAt : null,
   };
 }

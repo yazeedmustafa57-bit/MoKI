@@ -129,14 +129,14 @@ export default function Dashboard() {
               <Phone size={18} aria-hidden="true" />
             </span>
             <div>
-              <strong>Zadarma</strong>
-              <small>Telefonie</small>
+              <strong>ElevenLabs</strong>
+              <small>SIP-Outbound</small>
             </div>
             <StatusBadge status={telephony.status} type="integration" />
           </div>
           <p>{telephony.message}</p>
           <div className="status-card-foot">
-            <code>{telephony.sipNumberMasked || 'Keine SIP-Nummer'}</code>
+            <code>{telephony.phoneNumberIdMasked || 'Keine Phone-Number-ID'}</code>
             <Link to="/integrations">
               Details <ArrowRight size={14} />
             </Link>
@@ -328,8 +328,8 @@ export default function Dashboard() {
           <div>
             <strong>Integrationen einrichten</strong>
             <p>
-              Solange ElevenLabs oder Zadarma nicht konfiguriert sind, bleiben Sprachsitzungen und
-              Anrufe deaktiviert. Die Anwendung funktioniert ohne diese Dienste weiter.
+              Solange ElevenLabs nicht vollständig konfiguriert ist, bleiben Sprachsitzungen und
+              KI-Anrufe deaktiviert. Die Anwendung funktioniert ohne diese Dienste weiter.
             </p>
           </div>
           <Link to="/integrations" className="btn btn-secondary btn-sm">

@@ -66,6 +66,31 @@ const INTEGRATION_STATUS = {
   error: { label: 'Fehler', tone: 'danger' },
 };
 
+const CONVERSATION_STATUS = {
+  initiated: { label: 'Initiiert', tone: 'info' },
+  'in-progress': { label: 'Läuft', tone: 'info' },
+  processing: { label: 'Wird verarbeitet', tone: 'warning' },
+  done: { label: 'Beim Anbieter abgeschlossen', tone: 'success' },
+  failed: { label: 'Anbieterfehler', tone: 'danger' },
+};
+
+const CONVERSATION_RESULT = {
+  pending: { label: 'Ergebnis ausstehend', tone: 'neutral' },
+  successful: { label: 'Erfolgreich', tone: 'success' },
+  unsuccessful: { label: 'Nicht erfolgreich', tone: 'danger' },
+  failed: { label: 'Gespräch fehlgeschlagen', tone: 'danger' },
+  unclear: { label: 'Ergebnis unklar', tone: 'warning' },
+  unknown: { label: 'Nicht bewertet', tone: 'neutral' },
+};
+
+const TRANSCRIPT_STATUS = {
+  none: { label: 'Kein Transkript', tone: 'neutral' },
+  pending: { label: 'Transkript ausstehend', tone: 'neutral' },
+  processing: { label: 'Transkript wird erstellt', tone: 'warning' },
+  available: { label: 'Transkript verfügbar', tone: 'success' },
+  unavailable: { label: 'Kein Transkript verfügbar', tone: 'neutral' },
+};
+
 export function StatusBadge({ status, type = 'call' }) {
   const maps = {
     call: CALL_STATUS,
@@ -73,6 +98,9 @@ export function StatusBadge({ status, type = 'call' }) {
     priority: PRIORITY,
     appointment: APPOINTMENT_STATUS,
     integration: INTEGRATION_STATUS,
+    conversation: CONVERSATION_STATUS,
+    result: CONVERSATION_RESULT,
+    transcript: TRANSCRIPT_STATUS,
   };
   const meta = maps[type]?.[status] || { label: status || 'Unbekannt', tone: 'neutral' };
   return (

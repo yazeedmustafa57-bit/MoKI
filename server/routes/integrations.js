@@ -1,9 +1,21 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { checkElevenLabs } from '../integrations/elevenlabs.js';
 import { getIntegrationStatus } from '../integrations/status.js';
 import { checkZadarma } from '../integrations/zadarma.js';
-import { asyncHandler, HttpError } from '../utils.js';
 import { nowIso } from '../db.js';
+import {
+  credentialSnapshot,
+  CREDENTIAL_FIELDS,
+  storeCredentials,
+} from '../secrets.js';
+import { asyncHandler, HttpError, liveCallsEnabled, parse } from '../utils.js';
+
+const credentialsSchema = z.object({
+  apiKey: z.string().max(1000).optional(),
+  key: z.string().max(1000).optional(),
+  secret: z.string().max(1000).optional(),
+});
 
 export function integrationsRouter({ db, config }) {
   const router = Router();
@@ -12,8 +24,45 @@ export function integrationsRouter({ db, config }) {
     const snapshot = getIntegrationStatus(db, config);
     res.json({
       integrations: snapshot.list,
-      liveCallsEnabled: Boolean(config.zadarma.allowLiveCalls),
+      liveCallsEnabled: liveCallsEnabled(config),
     });
+  });
+
+  router.get('/credentials', (req, res) => {
+    res.json(credentialSnapshot(config, db));
+  });
+
+  router.put('/:provider/credentials', (req, res) => {
+    const provider = req.params.provider;
+    if (!CREDENTIAL_FIELDS[provider]) {
+      throw new HttpError(404, 'NOT_FOUND', 'Unbekannte Integration.');
+    }
+    const body = parse(credentialsSchema, req.body);
+    const allowedKeys = new Set(CREDENTIAL_FIELDS[provider].map((field) => field.key));
+    const values = Object.fromEntries(
+      Object.entries(body).filter(([key, value]) => allowedKeys.has(key) && value !== undefined),
+    );
+    try {
+      const result = storeCredentials(config, db, provider, values);
+      res.json({
+        message: 'Zugangsdaten verschlüsselt gespeichert.',
+        updatedAt: result.updatedAt,
+        credentials: credentialSnapshot(config, db),
+      });
+    } catch (error) {
+      if (error?.code === 'NO_CREDENTIAL_CHANGES') {
+        throw new HttpError(400, 'NO_CREDENTIAL_CHANGES', error.message);
+      }
+      if (error?.code === 'INVALID_CREDENTIAL') {
+        throw new HttpError(400, 'INVALID_CREDENTIAL', error.message);
+      }
+      console.error('Credential store error:', error?.code || 'SECRET_STORE_ERROR');
+      throw new HttpError(
+        500,
+        'CREDENTIAL_STORE_FAILED',
+        'Die Zugangsdaten konnten nicht dauerhaft gespeichert werden.',
+      );
+    }
   });
 
   router.post(
@@ -45,6 +94,7 @@ export function integrationsRouter({ db, config }) {
       res.json({
         result: { provider, ...result, checkedAt },
         integrations: snapshot.list,
+        liveCallsEnabled: liveCallsEnabled(config),
       });
     }),
   );

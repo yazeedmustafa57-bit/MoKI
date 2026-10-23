@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AudioLines,
   CheckCircle2,
@@ -15,8 +15,10 @@ import { useToast } from '../components/Toast.jsx';
 import { useApi } from '../hooks/useApi.js';
 import {
   ErrorState,
+  Field,
   LoadingState,
   PageHeader,
+  SectionCard,
   StatusBadge,
 } from '../components/ui.jsx';
 import { formatDateTime } from '../utils/format.js';
@@ -26,7 +28,12 @@ const PROVIDER_META = {
     icon: AudioLines,
     title: 'ElevenLabs',
     subtitle: 'Sprachassistent',
-    env: ['ELEVENLABS_API_KEY', 'ELEVENLABS_AGENT_ID', 'ELEVENLABS_AGENT_NAME'],
+    env: [
+      'ELEVENLABS_API_KEY',
+      'ELEVENLABS_AGENT_ID',
+      'ELEVENLABS_PHONE_NUMBER_ID',
+      'ELEVENLABS_AGENT_NAME',
+    ],
   },
   zadarma: {
     icon: Phone,
@@ -36,10 +43,38 @@ const PROVIDER_META = {
   },
 };
 
+const CREDENTIAL_PROVIDER_LABELS = {
+  elevenlabs: 'ElevenLabs',
+  zadarma: 'Zadarma',
+};
+
+const SOURCE_LABELS = {
+  database: 'verschlüsselt in der Datenbank',
+  environment: 'aus der Server-Umgebung',
+  missing: 'noch nicht hinterlegt',
+};
+
 export default function Integrations() {
   const { data, loading, error, reload, setData } = useApi('/integrations');
+  const credentialsApi = useApi('/integrations/credentials');
   const { toast } = useToast();
   const [checking, setChecking] = useState(null);
+  const [credentialForms, setCredentialForms] = useState({});
+  const [credentialStates, setCredentialStates] = useState({});
+
+  useEffect(() => {
+    if (!credentialsApi.data?.providers) return;
+    setCredentialForms((current) => {
+      const next = { ...current };
+      for (const provider of credentialsApi.data.providers) {
+        if (next[provider.provider]) continue;
+        next[provider.provider] = Object.fromEntries(
+          provider.fields.map((field) => [field.key, '']),
+        );
+      }
+      return next;
+    });
+  }, [credentialsApi.data]);
 
   const integrations = data?.integrations || [];
   const liveCallsEnabled = Boolean(data?.liveCallsEnabled);
@@ -50,9 +85,7 @@ export default function Integrations() {
       const result = await api(`/integrations/${provider}/check`, { method: 'POST' });
       setData({
         integrations: result.integrations,
-        liveCallsEnabled: Boolean(
-          result.integrations.find((item) => item.provider === 'zadarma')?.liveCallsEnabled,
-        ),
+        liveCallsEnabled: Boolean(result.liveCallsEnabled),
       });
       const check = result.result;
       toast(
@@ -66,11 +99,60 @@ export default function Integrations() {
     }
   };
 
+  const saveCredentials = async (provider, event) => {
+    event.preventDefault();
+    const form = credentialForms[provider] || {};
+    const values = Object.fromEntries(
+      Object.entries(form).filter(([, value]) => String(value || '').trim() !== ''),
+    );
+    if (Object.keys(values).length === 0) {
+      setCredentialStates((current) => ({
+        ...current,
+        [provider]: {
+          state: 'error',
+          message: 'Bitte mindestens einen Wert eingeben. Leere Felder überschreiben nichts.',
+        },
+      }));
+      return;
+    }
+    setCredentialStates((current) => ({
+      ...current,
+      [provider]: { state: 'saving', message: 'Wird gespeichert …' },
+    }));
+    try {
+      const result = await api(`/integrations/${provider}/credentials`, {
+        method: 'PUT',
+        body: values,
+      });
+      setCredentialForms((current) => ({
+        ...current,
+        [provider]: Object.fromEntries(
+          Object.keys(form).map((key) => [key, '']),
+        ),
+      }));
+      if (result.credentials) credentialsApi.setData(result.credentials);
+      setCredentialStates((current) => ({
+        ...current,
+        [provider]: { state: 'saved', message: 'Gespeichert.' },
+      }));
+      toast(result.message || 'Zugangsdaten gespeichert.', 'success');
+      reload();
+    } catch (requestError) {
+      setCredentialStates((current) => ({
+        ...current,
+        [provider]: {
+          state: 'error',
+          message: requestError.message || 'Speichern fehlgeschlagen.',
+        },
+      }));
+    }
+  };
+
   return (
     <div className="page-stack">
       <PageHeader
         title="Integrationen"
-        description="Status der serverseitigen Verbindungen. Zugangsdaten werden ausschließlich über Umgebungsvariablen gelesen."
+        description="Status der serverseitigen Verbindungen. Zugangsdaten bleiben auf dem Server."
       />
 
       <div className="notice notice-neutral">
@@ -78,8 +160,9 @@ export default function Integrations() {
         <div>
           <strong>Sicherheit</strong>
           <p>
-            API-Schlüssel sind weder im Frontend noch in API-Antworten sichtbar. Die Prüfung läuft
-            über den Server; angezeigt werden nur maskierte Kennungen.
+            API-Schlüssel sind weder im Frontend noch in API-Antworten sichtbar. Neue Zugangsdaten
+            werden mit AES-256-GCM verschlüsselt in der Datenbank gespeichert; der Schlüssel liegt
+            separat außerhalb der Datenbank. Angezeigt werden nur maskierte Kennungen.
           </p>
         </div>
       </div>
@@ -141,6 +224,16 @@ export default function Integrations() {
                           <code>{integration.agentIdMasked || '–'}</code>
                         </dd>
                       </div>
+                      <div>
+                        <dt>Phone-Number-ID</dt>
+                        <dd>
+                          <code>{integration.phoneNumberIdMasked || '–'}</code>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>SIP-Outbound</dt>
+                        <dd>{integration.outboundConfigured ? 'Bereit' : 'Nicht konfiguriert'}</dd>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -151,8 +244,8 @@ export default function Integrations() {
                         </dd>
                       </div>
                       <div>
-                        <dt>Live-Anrufe</dt>
-                        <dd>{integration.liveCallsEnabled ? 'Freigegeben' : 'Gesperrt'}</dd>
+                        <dt>Rolle</dt>
+                        <dd>SIP-Transport</dd>
                       </div>
                     </>
                   )}
@@ -175,9 +268,11 @@ export default function Integrations() {
 
                 {integration.provider === 'elevenlabs' ? (
                   <p className="muted small">
-                    Es wird ausschließlich der per Agent-ID zugeordnete Agent verwendet. Eine
-                    separate „Anna“-Konfiguration ist in diesem Projekt nicht vorhanden; andere
-                    Agenten werden nicht verändert.
+                    Es wird ausschließlich der per Agent-ID zugeordnete Agent verwendet. KI-Anrufe
+                    starten über <code>POST /v1/convai/sip-trunk/outbound-call</code> mit der
+                    vorhandenen Phone-Number-ID; Twilio wird nicht verwendet. Eine separate
+                    „Anna“-Konfiguration ist in diesem Projekt nicht vorhanden; andere Agenten
+                    werden nicht verändert.
                   </p>
                 ) : null}
 
@@ -207,6 +302,99 @@ export default function Integrations() {
         </div>
       ) : null}
 
+      <SectionCard
+        title="Zugangsdaten"
+        description="Änderungen werden nach Bestätigung dauerhaft und verschlüsselt gespeichert. Leere Felder überschreiben keine vorhandenen Werte."
+      >
+        {credentialsApi.loading && !credentialsApi.data ? (
+          <LoadingState label="Zugangsdaten werden geladen …" />
+        ) : null}
+        {credentialsApi.error && !credentialsApi.data ? (
+          <ErrorState error={credentialsApi.error} onRetry={credentialsApi.reload} />
+        ) : null}
+        {credentialsApi.data?.storage?.warnings?.length ? (
+          <div className="form-error">{credentialsApi.data.storage.warnings.join(' ')}</div>
+        ) : null}
+        {credentialsApi.data?.providers?.length ? (
+          <div className="credentials-grid">
+            {credentialsApi.data.providers.map((provider) => {
+              const form = credentialForms[provider.provider] || {};
+              const status = credentialStates[provider.provider];
+              return (
+                <form
+                  key={provider.provider}
+                  className="credential-form"
+                  onSubmit={(event) => saveCredentials(provider.provider, event)}
+                >
+                  <h3>{CREDENTIAL_PROVIDER_LABELS[provider.provider] || provider.provider}</h3>
+                  <p className="muted small">
+                    {provider.fields.some((field) => field.configured)
+                      ? 'Mindestens ein Wert ist hinterlegt. Leere Felder bleiben unverändert.'
+                      : 'Noch keine Zugangsdaten hinterlegt.'}
+                  </p>
+                  {provider.fields.map((field) => (
+                    <Field
+                      key={field.key}
+                      label={field.label}
+                      htmlFor={`credential-${provider.provider}-${field.key}`}
+                      hint={
+                        field.configured
+                          ? `Gespeichert: ${field.masked} · Quelle: ${SOURCE_LABELS[field.source] || field.source}`
+                          : 'Noch nicht hinterlegt.'
+                      }
+                    >
+                      <input
+                        id={`credential-${provider.provider}-${field.key}`}
+                        type="password"
+                        autoComplete="new-password"
+                        value={form[field.key] || ''}
+                        placeholder={
+                          field.configured
+                            ? 'Leer lassen, um den gespeicherten Wert zu behalten'
+                            : 'Wert eingeben'
+                        }
+                        onChange={(event) =>
+                          setCredentialForms((current) => ({
+                            ...current,
+                            [provider.provider]: {
+                              ...(current[provider.provider] || {}),
+                              [field.key]: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </Field>
+                  ))}
+                  <div className="credential-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-sm"
+                      disabled={status?.state === 'saving'}
+                    >
+                      {status?.state === 'saving' ? (
+                        <LoaderCircle size={15} className="spin" />
+                      ) : (
+                        <KeyRound size={15} />
+                      )}
+                      Zugangsdaten speichern
+                    </button>
+                    {status ? (
+                      <span
+                        className={`save-status save-status-${status.state}`}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {status.message}
+                      </span>
+                    ) : null}
+                  </div>
+                </form>
+              );
+            })}
+          </div>
+        ) : null}
+      </SectionCard>
+
       <div className={`notice ${liveCallsEnabled ? 'notice-warning' : 'notice-info'}`}>
         <CircleAlert size={18} aria-hidden="true" />
         <div>
@@ -224,9 +412,9 @@ export default function Integrations() {
         <div>
           <strong>Einrichtung</strong>
           <p>
-            Trage die Werte in eine lokale <code>.env</code>-Datei ein (Vorlage:
-            <code>.env.example</code>) und starte den Server neu. Werte werden nie über die
-            Oberfläche eingegeben oder gespeichert.
+            Bestehende Werte aus <code>.env</code> bleiben gültig. Neue Werte können oben
+            eingegeben werden und werden serverseitig verschlüsselt gespeichert; sie werden
+            weder in den Browser-Speicher noch in Logs geschrieben.
           </p>
         </div>
       </div>

@@ -1,9 +1,25 @@
 import { createApp } from './app.js';
 
-const { app, config, close } = createApp();
+let handle;
+try {
+  handle = createApp();
+} catch (error) {
+  console.error(`Start abgebrochen: ${error?.message || 'Unbekannter Initialisierungsfehler.'}`);
+  process.exit(1);
+}
+
+const { app, config, bootstrap, close } = handle;
 const server = app.listen(config.port, config.host, () => {
   const host = config.host === '0.0.0.0' ? 'localhost' : config.host;
   console.log(`Victor AI Assistant läuft auf http://${host}:${config.port}`);
+  console.log(
+    bootstrap?.bootstrapped
+      ? 'Owner-Bootstrap: Owner-Konto neu angelegt.'
+      : 'Owner: vorhanden.',
+  );
+  if (config.previewMode) {
+    console.log('Preview-Modus: echte Outbound-Anrufe sind serverseitig gesperrt.');
+  }
   console.log(
     `ElevenLabs: ${config.elevenlabs.apiKey && config.elevenlabs.agentId ? 'konfiguriert' : 'nicht konfiguriert'} | Zadarma: ${
       config.zadarma.key && config.zadarma.secret && config.zadarma.sipNumber

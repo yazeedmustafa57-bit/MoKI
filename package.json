@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Victor AI Assistant – responsive assistant dashboard with ElevenLabs and Zadarma integrations",
+  "description": "Victor AI Assistant \u2013 responsive assistant dashboard with ElevenLabs and Zadarma integrations",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -11,10 +11,13 @@
     "dev": "concurrently -k -n server,client -c blue,green \"node --watch server/index.js\" \"vite --config client/vite.config.js\"",
     "build": "vite build --config client/vite.config.js",
     "start": "node server/index.js",
+    "owner:hash": "node scripts/hash-owner-password.js",
     "test": "node --test --test-concurrency=1 tests/api.test.js",
     "pretest:ui": "npm run build",
     "test:ui": "node --test --test-concurrency=1 tests/ui.test.js",
-    "test:all": "npm test && npm run test:ui"
+    "test:all": "npm test && npm run test:ui",
+    "backup": "node scripts/backup.js",
+    "test:simulation": "node scripts/simulate-call-safety.js"
   },
   "dependencies": {
     "@elevenlabs/client": "^1.30.0",

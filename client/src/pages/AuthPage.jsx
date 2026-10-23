@@ -2,15 +2,8 @@ import { useState } from 'react';
 import { Eye, EyeOff, LoaderCircle, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react';
 import { api } from '../api.js';
 
-export default function AuthPage({ setupRequired, onAuthenticated }) {
-  const [mode, setMode] = useState(setupRequired ? 'setup' : 'login');
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-    remember: true,
-  });
+export default function AuthPage({ onAuthenticated }) {
+  const [form, setForm] = useState({ email: '', password: '', remember: true });
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -23,28 +16,13 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
   const submit = async (event) => {
     event.preventDefault();
     setError(null);
-    if (mode === 'setup') {
-      if (form.name.trim().length < 2) {
-        setError('Bitte gib deinen Namen ein.');
-        return;
-      }
-      if (form.password.length < 10) {
-        setError('Das Passwort muss mindestens 10 Zeichen lang sein.');
-        return;
-      }
-      if (form.password !== form.confirmPassword) {
-        setError('Die Passwörter stimmen nicht überein.');
-        return;
-      }
-    }
     setSubmitting(true);
     try {
-      const path = mode === 'setup' ? '/auth/setup' : '/auth/login';
-      const body =
-        mode === 'setup'
-          ? { name: form.name, email: form.email, password: form.password }
-          : { email: form.email, password: form.password, remember: form.remember };
-      const data = await api(path, { method: 'POST', body, skipUnauthorized: true });
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: { email: form.email, password: form.password, remember: form.remember },
+        skipUnauthorized: true,
+      });
       onAuthenticated(data.user);
     } catch (requestError) {
       setError(requestError.message);
@@ -92,12 +70,8 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
             <strong>Victor AI</strong>
           </div>
           <div className="auth-heading">
-            <h2>{mode === 'setup' ? 'Konto einrichten' : 'Willkommen zurück'}</h2>
-            <p>
-              {mode === 'setup'
-                ? 'Lege das erste Konto für deinen geschützten Victor-Bereich an.'
-                : 'Melde dich an, um mit Victor weiterzuarbeiten.'}
-            </p>
+            <h2>Willkommen zurück</h2>
+            <p>Melde dich an, um mit Victor weiterzuarbeiten.</p>
           </div>
 
           {error ? (
@@ -107,21 +81,6 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
           ) : null}
 
           <form onSubmit={submit} className="auth-form">
-            {mode === 'setup' ? (
-              <label className="field">
-                <span>Name</span>
-                <input
-                  name="name"
-                  autoComplete="name"
-                  value={form.name}
-                  onChange={update('name')}
-                  placeholder="Vor- und Nachname"
-                  data-autofocus
-                  required
-                />
-              </label>
-            ) : null}
-
             <label className="field">
               <span>E-Mail-Adresse</span>
               <input
@@ -132,7 +91,7 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
                 value={form.email}
                 onChange={update('email')}
                 placeholder="du@beispiel.de"
-                data-autofocus={mode === 'login' ? true : undefined}
+                data-autofocus
                 required
               />
             </label>
@@ -143,11 +102,10 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
                 <input
                   name="password"
                   type={showPassword ? 'text' : 'password'}
-                  autoComplete={mode === 'setup' ? 'new-password' : 'current-password'}
+                  autoComplete="current-password"
                   value={form.password}
                   onChange={update('password')}
-                  placeholder={mode === 'setup' ? 'Mindestens 10 Zeichen' : 'Dein Passwort'}
-                  minLength={mode === 'setup' ? 10 : undefined}
+                  placeholder="Dein Passwort"
                   required
                 />
                 <button
@@ -161,61 +119,26 @@ export default function AuthPage({ setupRequired, onAuthenticated }) {
               </div>
             </label>
 
-            {mode === 'setup' ? (
-              <label className="field">
-                <span>Passwort wiederholen</span>
-                <input
-                  name="confirmPassword"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  value={form.confirmPassword}
-                  onChange={update('confirmPassword')}
-                  placeholder="Passwort erneut eingeben"
-                  required
-                />
-              </label>
-            ) : (
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  name="remember"
-                  checked={form.remember}
-                  onChange={update('remember')}
-                />
-                <span>Angemeldet bleiben</span>
-              </label>
-            )}
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                name="remember"
+                checked={form.remember}
+                onChange={update('remember')}
+              />
+              <span>Angemeldet bleiben</span>
+            </label>
 
             <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
               {submitting ? <LoaderCircle size={18} className="spin" /> : null}
-              {mode === 'setup' ? 'Konto erstellen' : 'Anmelden'}
+              Anmelden
             </button>
           </form>
 
-          {!setupRequired ? (
-            <p className="auth-switch">
-              {mode === 'login' ? (
-                <>
-                  Noch kein Konto?{' '}
-                  <button type="button" onClick={() => setMode('setup')}>
-                    Einrichtung starten
-                  </button>
-                </>
-              ) : (
-                <>
-                  Konto bereits vorhanden?{' '}
-                  <button type="button" onClick={() => setMode('login')}>
-                    Zur Anmeldung
-                  </button>
-                </>
-              )}
-            </p>
-          ) : (
-            <p className="auth-note">
-              Dies ist die einmalige Ersteinrichtung. Das Konto wird lokal in der Datenbank
-              angelegt. Es werden keine Daten an Dritte übertragen.
-            </p>
-          )}
+          <p className="auth-note">
+            Die öffentliche Registrierung ist deaktiviert. Zugriff hat ausschließlich das
+            konfigurierte Owner-Konto.
+          </p>
         </div>
       </main>
     </div>

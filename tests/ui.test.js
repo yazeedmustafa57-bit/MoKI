@@ -7,6 +7,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { hashPassword } from '../server/auth.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseConfig = {
@@ -55,6 +56,9 @@ test(
     }
 
     t.diagnostic('Starting production server with temporary database…');
+    const ownerEmail = 'ui@example.com';
+    const ownerPassword = 'Test-Passwort-123!';
+    const ownerHash = await hashPassword(ownerPassword);
     baseConfig.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'victor-ui-'));
     baseConfig.port = await freePort();
     baseConfig.baseUrl = `http://127.0.0.1:${baseConfig.port}`;
@@ -69,6 +73,17 @@ test(
         PORT: String(baseConfig.port),
         DATA_DIR: baseConfig.dataDir,
         COOKIE_SECURE: 'false',
+        OWNER_BOOTSTRAP_EMAIL: ownerEmail,
+        OWNER_BOOTSTRAP_PASSWORD_HASH: ownerHash,
+        OWNER_BOOTSTRAP_NAME: 'Test Nutzer',
+        ELEVENLABS_API_KEY: '',
+        ELEVENLABS_AGENT_ID: '',
+        ELEVENLABS_AGENT_NAME: 'Victor',
+        ELEVENLABS_PHONE_NUMBER_ID: '',
+        ZADARMA_KEY: '',
+        ZADARMA_SECRET: '',
+        ZADARMA_SIP_NUMBER: '',
+        ALLOW_LIVE_CALLS: 'false',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -107,16 +122,17 @@ test(
       const navLink = (name) =>
         page.locator('.sidebar').getByRole('link', { name, exact: true });
 
-      await t.test('first-run setup and dashboard', async () => {
+      await t.test('login page is closed to public setup and owner can log in', async () => {
         await page.goto(baseConfig.baseUrl, { waitUntil: 'domcontentloaded' });
         await page
-          .getByRole('heading', { name: 'Konto einrichten' })
+          .getByRole('heading', { name: 'Willkommen zurück' })
           .waitFor({ state: 'visible', timeout: 15000 });
-        await page.getByLabel('Name', { exact: true }).fill('Test Nutzer');
-        await page.getByLabel('E-Mail-Adresse', { exact: true }).fill('ui@example.com');
-        await page.getByLabel('Passwort', { exact: true }).fill('Test-Passwort-123!');
-        await page.getByLabel('Passwort wiederholen', { exact: true }).fill('Test-Passwort-123!');
-        await page.getByRole('button', { name: 'Konto erstellen' }).click();
+        assert.equal(await page.getByRole('heading', { name: 'Konto einrichten' }).count(), 0);
+        assert.equal(await page.getByRole('button', { name: /Konto erstellen/ }).count(), 0);
+        assert.equal(await page.getByText(/öffentliche Registrierung ist deaktiviert/).count(), 1);
+        await page.getByLabel('E-Mail-Adresse', { exact: true }).fill(ownerEmail);
+        await page.getByLabel('Passwort', { exact: true }).fill(ownerPassword);
+        await page.getByRole('button', { name: 'Anmelden' }).click();
         await heading(/^Guten (Morgen|Tag|Abend), Test$/);
         assert.equal(await page.locator('.nav-link').count(), 10);
         assert.equal(await page.locator('.menu-button').getAttribute('aria-expanded'), 'true');
@@ -216,12 +232,18 @@ test(
         await dialog
           .getByLabel('Kontakt (optional)')
           .selectOption({ label: 'Erika Beispiel · +4917612345678' });
-        const phoneInput = dialog.getByLabel('Telefonnummer');
+        const phoneInput = dialog.getByLabel('Telefonnummer', { exact: true });
         await phoneInput.waitFor({ state: 'visible' });
         assert.equal(await phoneInput.inputValue(), '+4917612345678');
+        await dialog
+          .getByLabel('Auftrag / Gesprächsziel')
+          .fill('Frag bei der Zahnarztpraxis nach einem Kontrolltermin.');
         await dialog.getByRole('button', { name: 'Vorbereiten' }).click();
         const row = page.locator('.data-row').filter({ hasText: 'Erika Beispiel' }).first();
         await row.waitFor({ state: 'visible', timeout: 15000 });
+        await row
+          .getByText('Frag bei der Zahnarztpraxis nach einem Kontrolltermin.')
+          .waitFor({ state: 'visible' });
         const startButton = row.getByRole('button', { name: 'Anrufen' });
         assert.equal(await startButton.isDisabled(), true);
         await row.getByRole('button', { name: 'Erledigt' }).click();
@@ -234,6 +256,35 @@ test(
         const reloaded = page.locator('.data-row').filter({ hasText: 'Erika Beispiel' }).first();
         await reloaded.waitFor({ state: 'visible', timeout: 15000 });
         await reloaded.getByText('Abgeschlossen', { exact: true }).waitFor({ state: 'visible' });
+      });
+
+      await t.test('conversation details separate status from result and delete locally', async () => {
+        await navLink('Anrufe').click();
+        await heading('Anrufe');
+        const row = page.locator('.data-row').filter({ hasText: 'Erika Beispiel' }).first();
+        await row.waitFor({ state: 'visible', timeout: 15000 });
+        await row.getByRole('button', { name: 'Details' }).click();
+        const dialog = page.getByRole('dialog');
+        await dialog.getByText('Technischer Status', { exact: true }).waitFor({ state: 'visible' });
+        await dialog.getByText('Anbieterstatus', { exact: true }).waitFor({ state: 'visible' });
+        await dialog.getByText('Gesprächsergebnis', { exact: true }).waitFor({ state: 'visible' });
+        await dialog.getByText('Nicht synchronisiert', { exact: true }).waitFor({ state: 'visible' });
+        await dialog
+          .getByText('Für diesen Anruf wurde noch keine ElevenLabs-Konversation hinterlegt.')
+          .waitFor({ state: 'visible' });
+        await dialog.getByRole('button', { name: 'Löschen' }).click();
+        const deleteDialog = page.getByRole('dialog');
+        await deleteDialog.getByText('Beim Anbieter gespeicherte Gesprächsdaten').waitFor({
+          state: 'visible',
+        });
+        await deleteDialog.getByRole('button', { name: 'Endgültig löschen' }).click();
+        await row.waitFor({ state: 'detached', timeout: 15000 });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await heading('Anrufe');
+        assert.equal(
+          await page.locator('.data-row').filter({ hasText: 'Erika Beispiel' }).count(),
+          0,
+        );
       });
 
       await t.test('transcript form saves and persists', async () => {
@@ -298,6 +349,31 @@ test(
           .waitFor({ state: 'visible', timeout: 15000 });
       });
 
+      await t.test('credential form saves encrypted values and shows confirmation', async () => {
+        await navLink('Integrationen').click();
+        await heading('Integrationen');
+        const form = page
+          .locator('form.credential-form')
+          .filter({ hasText: 'ElevenLabs' })
+          .first();
+        const secret = 'ui-test-credential-123456';
+        await form.locator('#credential-elevenlabs-apiKey').fill(secret);
+        await form.getByRole('button', { name: 'Zugangsdaten speichern' }).click();
+        await form.getByText('Gespeichert.', { exact: true }).waitFor({ state: 'visible' });
+        await form
+          .getByText(/Quelle: verschlüsselt in der Datenbank/)
+          .waitFor({ state: 'visible' });
+        assert.equal((await page.content()).includes(secret), false);
+
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await heading('Integrationen');
+        await page
+          .getByText(/Quelle: verschlüsselt in der Datenbank/)
+          .first()
+          .waitFor({ state: 'visible', timeout: 15000 });
+        assert.equal((await page.content()).includes(secret), false);
+      });
+
       await t.test('profile updates and persists', async () => {
         await navLink('Profil').click();
         await heading('Profil');
@@ -337,8 +413,8 @@ test(
         await page
           .getByRole('heading', { name: 'Willkommen zurück' })
           .waitFor({ state: 'visible', timeout: 15000 });
-        await page.getByLabel('E-Mail-Adresse', { exact: true }).fill('ui@example.com');
-        await page.getByLabel('Passwort', { exact: true }).fill('Test-Passwort-123!');
+        await page.getByLabel('E-Mail-Adresse', { exact: true }).fill(ownerEmail);
+        await page.getByLabel('Passwort', { exact: true }).fill(ownerPassword);
         await page.getByRole('button', { name: 'Anmelden' }).click();
         await heading('Aufgaben');
         await navLink('Dashboard').click();

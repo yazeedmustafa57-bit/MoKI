@@ -119,6 +119,11 @@ export function requireAuth(req, res, next) {
       error: { code: 'UNAUTHENTICATED', message: 'Bitte melde dich an.' },
     });
   }
+  if (req.user.role !== 'owner') {
+    return res.status(403).json({
+      error: { code: 'FORBIDDEN', message: 'Zugriff nur für das Owner-Konto.' },
+    });
+  }
   next();
 }
 

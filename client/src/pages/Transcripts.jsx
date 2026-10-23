@@ -9,6 +9,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api } from '../api.js';
+import ConversationTranscript from '../components/ConversationTranscript.jsx';
 import { Modal } from '../components/Modal.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useApi, useDebounced } from '../hooks/useApi.js';
@@ -211,9 +212,20 @@ export default function Transcripts() {
                       {call.contactName || call.phone || 'Anruf'}
                     </Badge>
                   ) : null}
+                  {transcript.source === 'elevenlabs' ? (
+                    <Badge tone="success">Automatisch übertragen</Badge>
+                  ) : null}
                 </div>
                 {transcript.summary ? <p className="transcript-summary">{transcript.summary}</p> : null}
-                {transcript.content ? (
+                {transcript.segments?.length > 0 ? (
+                  <details className="transcript-content">
+                    <summary>Gesprächsverlauf anzeigen</summary>
+                    <ConversationTranscript
+                      segments={transcript.segments}
+                      contactName={call?.contactName || 'Gesprächspartner'}
+                    />
+                  </details>
+                ) : transcript.content ? (
                   <details className="transcript-content">
                     <summary>Inhalt anzeigen</summary>
                     <p>{transcript.content}</p>

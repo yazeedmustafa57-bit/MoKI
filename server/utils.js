@@ -44,6 +44,31 @@ export function maskPhone(value) {
   return `${'•'.repeat(Math.max(3, digits.length - 4))}${digits.slice(-4)}`;
 }
 
+export function sanitizeProviderMessage(message, phone) {
+  let text = String(message ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim();
+  if (!text) return '';
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  if (digits.length >= 7) {
+    text = text.split(String(phone)).join(maskPhone(phone));
+    text = text.split(digits).join(maskPhone(phone));
+  }
+  text = text.replace(/\+?\d[\d\s()./-]{5,}\d/g, (match) => {
+    const candidate = match.replace(/\D/g, '');
+    return candidate.length >= 7 ? maskPhone(candidate) : match;
+  });
+  return text.slice(0, 200);
+}
+
+export function liveCallsEnabled(config) {
+  return Boolean(
+    config?.allowLiveCalls ??
+      config?.elevenlabs?.allowLiveCalls ??
+      config?.zadarma?.allowLiveCalls,
+  );
+}
+
 export const text = (max = 500) => z.string().trim().max(max, `Maximal ${max} Zeichen.`);
 export const requiredText = (max = 200, label = 'Dieses Feld') =>
   z.string().trim().min(1, `${label} ist erforderlich.`).max(max, `Maximal ${max} Zeichen.`);
@@ -61,6 +86,38 @@ export const optionalPhone = z
   )
   .optional()
   .default('');
+
+export function normalizePhoneNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    throw new Error('Bitte gib eine Telefonnummer an.');
+  }
+  const compact = raw.replace(/[\s()./\-]/g, '');
+  if (!/^\+?\d+$/.test(compact)) {
+    throw new Error('Die Telefonnummer enthält ungültige Zeichen.');
+  }
+
+  let normalized = compact;
+  if (normalized.startsWith('00')) {
+    normalized = `+${normalized.slice(2)}`;
+  } else if (normalized.startsWith('0')) {
+    normalized = `+49${normalized.slice(1)}`;
+  } else if (!normalized.startsWith('+')) {
+    throw new Error(
+      'Bitte verwende das internationale Format, z. B. +491701234567.',
+    );
+  }
+  if (normalized.startsWith('+490')) {
+    normalized = `+49${normalized.slice(4)}`;
+  }
+
+  if (!/^\+[1-9]\d{6,14}$/.test(normalized)) {
+    throw new Error(
+      'Ungültige Telefonnummer. Bitte verwende das internationale Format, z. B. +491701234567.',
+    );
+  }
+  return normalized;
+}
 
 export const isoDateTime = z
   .string()
@@ -140,20 +197,42 @@ export function callOut(row) {
     id: row.id,
     contactId: row.contact_id,
     contactName: row.contact_name || null,
+    contactCompany: row.contact_company || null,
     direction: row.direction,
     status: row.status,
     phone: row.phone,
+    brief: row.brief || '',
     notes: row.notes,
+    bookingAuthorized: Boolean(row.booking_authorized),
+    sharePhone: Boolean(row.share_phone),
     errorCode: row.error_code,
     errorMessage: row.error_message,
     provider: row.provider,
+    providerHttpStatus: row.provider_http_status,
     providerRef: row.provider_ref,
+    conversationStatus: row.conversation_status || '',
+    conversationResult: row.conversation_result || 'unknown',
+    resultSummary: row.result_summary || '',
+    transcriptStatus: row.transcript_status || 'none',
+    terminationReason: row.termination_reason || '',
+    providerSyncedAt: row.provider_synced_at || null,
+    providerUpdatedAt: row.provider_updated_at || null,
     durationSeconds: row.duration_seconds,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseSegments(value) {
+  if (!value) return [];
+  try {
+    const segments = JSON.parse(value);
+    return Array.isArray(segments) ? segments : [];
+  } catch {
+    return [];
+  }
 }
 
 export function transcriptOut(row) {
@@ -164,6 +243,10 @@ export function transcriptOut(row) {
     content: row.content,
     summary: row.summary,
     durationSeconds: row.duration_seconds,
+    source: row.source || 'manual',
+    segments: parseSegments(row.segments),
+    providerRef: row.provider_ref || '',
+    language: row.language || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

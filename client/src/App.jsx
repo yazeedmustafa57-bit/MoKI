@@ -19,7 +19,6 @@ import Settings from './pages/Settings.jsx';
 export default function App() {
   const [auth, setAuth] = useState({
     loading: true,
-    setupRequired: false,
     authenticated: false,
     user: null,
     error: null,
@@ -31,7 +30,6 @@ export default function App() {
       const data = await api('/auth/status', { skipUnauthorized: true });
       setAuth({
         loading: false,
-        setupRequired: data.setupRequired,
         authenticated: data.authenticated,
         user: data.user,
         error: null,
@@ -51,7 +49,6 @@ export default function App() {
         ...current,
         authenticated: false,
         user: null,
-        setupRequired: false,
       }));
     };
     window.addEventListener('victor:unauthorized', handleUnauthorized);
@@ -61,7 +58,6 @@ export default function App() {
   const handleAuthenticated = (user) => {
     setAuth({
       loading: false,
-      setupRequired: false,
       authenticated: true,
       user,
       error: null,
@@ -101,13 +97,8 @@ export default function App() {
     );
   }
 
-  if (auth.setupRequired || !auth.authenticated) {
-    return (
-      <AuthPage
-        setupRequired={auth.setupRequired}
-        onAuthenticated={handleAuthenticated}
-      />
-    );
+  if (!auth.authenticated) {
+    return <AuthPage onAuthenticated={handleAuthenticated} />;
   }
 
   return (

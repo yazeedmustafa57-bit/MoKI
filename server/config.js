@@ -26,6 +26,18 @@ export function loadConfig(overrides = {}) {
     overrides.dataDir ?? process.env.DATA_DIR ?? path.join(rootDir, 'data'),
   );
 
+  const ownerBootstrapEmail = String(
+    overrides.ownerBootstrapEmail ?? process.env.OWNER_BOOTSTRAP_EMAIL ?? '',
+  )
+    .trim()
+    .toLowerCase();
+  const ownerBootstrapPasswordHash = String(
+    overrides.ownerBootstrapPasswordHash ?? process.env.OWNER_BOOTSTRAP_PASSWORD_HASH ?? '',
+  ).trim();
+  const ownerBootstrapName =
+    String(overrides.ownerBootstrapName ?? process.env.OWNER_BOOTSTRAP_NAME ?? 'Owner').trim() ||
+    'Owner';
+
   const config = {
     rootDir,
     nodeEnv,
@@ -34,21 +46,47 @@ export function loadConfig(overrides = {}) {
     port: overrides.port ?? int(process.env.PORT, 3002),
     dataDir,
     dbFile: overrides.dbFile ?? process.env.DB_FILE ?? path.join(dataDir, 'victor.db'),
+    allowLiveCalls:
+      overrides.allowLiveCalls ?? bool(process.env.ALLOW_LIVE_CALLS, false),
+    previewMode: overrides.previewMode ?? bool(process.env.PREVIEW_MODE, false),
+    secretsKey: String(overrides.secretsKey ?? process.env.SECRETS_KEY ?? '').trim(),
+    secretsKeyFile: path.resolve(
+      overrides.secretsKeyFile ??
+        process.env.SECRETS_KEY_FILE ??
+        path.join(dataDir, 'secrets.key'),
+    ),
+    backupDir: path.resolve(
+      overrides.backupDir ?? process.env.BACKUP_DIR ?? path.join(dataDir, 'backups'),
+    ),
     cookieSecure: overrides.cookieSecure ?? bool(process.env.COOKIE_SECURE, nodeEnv === 'production'),
     sessionDays: int(process.env.SESSION_DAYS, 7),
     trustProxy: bool(process.env.TRUST_PROXY, false),
+    ownerBootstrap: {
+      email: ownerBootstrapEmail,
+      passwordHash: ownerBootstrapPasswordHash,
+      name: ownerBootstrapName,
+    },
     elevenlabs: {
       apiKey: overrides.elevenlabsApiKey ?? process.env.ELEVENLABS_API_KEY ?? '',
       agentId: overrides.elevenlabsAgentId ?? process.env.ELEVENLABS_AGENT_ID ?? '',
       agentName: overrides.elevenlabsAgentName ?? process.env.ELEVENLABS_AGENT_NAME ?? 'Victor',
-      baseUrl: process.env.ELEVENLABS_BASE_URL ?? 'https://api.elevenlabs.io',
+      phoneNumberId:
+        overrides.elevenlabsPhoneNumberId ?? process.env.ELEVENLABS_PHONE_NUMBER_ID ?? '',
+      baseUrl:
+        overrides.elevenlabsBaseUrl ??
+        process.env.ELEVENLABS_BASE_URL ??
+        'https://api.elevenlabs.io',
     },
     zadarma: {
       key: overrides.zadarmaKey ?? process.env.ZADARMA_KEY ?? '',
       secret: overrides.zadarmaSecret ?? process.env.ZADARMA_SECRET ?? '',
       sipNumber: overrides.zadarmaSipNumber ?? process.env.ZADARMA_SIP_NUMBER ?? '',
-      baseUrl: process.env.ZADARMA_BASE_URL ?? 'https://api.zadarma.com',
-      allowLiveCalls: overrides.allowLiveCalls ?? bool(process.env.ALLOW_LIVE_CALLS, false),
+      baseUrl:
+        overrides.zadarmaBaseUrl ??
+        process.env.ZADARMA_BASE_URL ??
+        'https://api.zadarma.com',
+      allowLiveCalls:
+        overrides.allowLiveCalls ?? bool(process.env.ALLOW_LIVE_CALLS, false),
     },
   };
 
@@ -56,6 +94,12 @@ export function loadConfig(overrides = {}) {
 }
 
 export function ensureDataDir(config) {
-  fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
+  const directory = path.dirname(config.dbFile);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(directory, 0o700);
+  } catch {
+    // Best effort on platforms without POSIX permissions.
+  }
   return config;
 }

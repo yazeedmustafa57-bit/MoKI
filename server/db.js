@@ -124,15 +124,103 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 2,
+    up: `
+      CREATE TRIGGER IF NOT EXISTS users_single_owner_insert
+      BEFORE INSERT ON users
+      WHEN (SELECT COUNT(*) FROM users) >= 1
+      BEGIN
+        SELECT RAISE(ABORT, 'single-owner-only');
+      END;
+    `,
+  },
+  {
+    version: 3,
+    up: `
+      ALTER TABLE calls ADD COLUMN provider_http_status INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 4,
+    up: `
+      CREATE TABLE IF NOT EXISTS integration_secrets (
+        name TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 5,
+    up: `
+      ALTER TABLE calls ADD COLUMN brief TEXT NOT NULL DEFAULT '';
+      ALTER TABLE calls ADD COLUMN call_context TEXT NOT NULL DEFAULT '';
+      UPDATE calls SET brief = notes WHERE brief = '';
+    `,
+  },
+  {
+    version: 6,
+    up: `
+      ALTER TABLE calls ADD COLUMN booking_authorized INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE calls ADD COLUMN share_phone INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 7,
+    up: `
+      ALTER TABLE calls ADD COLUMN conversation_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE calls ADD COLUMN conversation_result TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE calls ADD COLUMN result_summary TEXT NOT NULL DEFAULT '';
+      ALTER TABLE calls ADD COLUMN transcript_status TEXT NOT NULL DEFAULT 'none';
+      ALTER TABLE calls ADD COLUMN termination_reason TEXT NOT NULL DEFAULT '';
+      ALTER TABLE calls ADD COLUMN provider_synced_at TEXT;
+      ALTER TABLE calls ADD COLUMN provider_updated_at TEXT;
+
+      ALTER TABLE transcripts ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+      ALTER TABLE transcripts ADD COLUMN segments TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE transcripts ADD COLUMN provider_ref TEXT NOT NULL DEFAULT '';
+      ALTER TABLE transcripts ADD COLUMN language TEXT NOT NULL DEFAULT '';
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripts_provider_call
+        ON transcripts(user_id, call_id, source)
+        WHERE source = 'elevenlabs' AND call_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS deleted_conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        provider_ref TEXT NOT NULL,
+        deleted_at TEXT NOT NULL,
+        UNIQUE(user_id, provider, provider_ref)
+      );
+      CREATE INDEX IF NOT EXISTS idx_deleted_conversations_user
+        ON deleted_conversations(user_id, deleted_at DESC);
+    `,
+  },
 ];
 
 export function openDatabase(config) {
   fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
   const db = new DatabaseSync(config.dbFile);
   db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA synchronous = FULL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   migrate(db);
+  try {
+    fs.chmodSync(config.dbFile, 0o600);
+  } catch {
+    // Best effort on platforms without POSIX permissions.
+  }
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      const sidecar = `${config.dbFile}${suffix}`;
+      if (fs.existsSync(sidecar)) fs.chmodSync(sidecar, 0o600);
+    } catch {
+      // Best effort.
+    }
+  }
   return db;
 }
 

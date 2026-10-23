@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { maskPhone } from '../utils.js';
+import {
+  liveCallsEnabled,
+  maskPhone,
+  normalizePhoneNumber,
+  sanitizeProviderMessage,
+} from '../utils.js';
 
 const TIMEOUT_MS = 12000;
 
@@ -14,12 +19,13 @@ export function zadarmaPublicStatus(config) {
     name: 'Zadarma',
     configured,
     liveCallsEnabled: Boolean(config.zadarma.allowLiveCalls),
+    previewMode: Boolean(config.previewMode),
     sipNumberMasked: maskPhone(config.zadarma.sipNumber),
-    message: configured
-      ? config.zadarma.allowLiveCalls
-        ? 'Zadarma ist konfiguriert und Live-Anrufe sind freigeschaltet.'
-        : 'Zadarma ist konfiguriert, Live-Anrufe sind jedoch gesperrt (ALLOW_LIVE_CALLS=false).'
-      : 'Zadarma ist nicht konfiguriert. ZADARMA_KEY, ZADARMA_SECRET und ZADARMA_SIP_NUMBER fehlen.',
+    message: config.previewMode
+      ? 'Preview-Modus: Echte Anrufe sind serverseitig gesperrt.'
+      : configured
+        ? 'Zadarma ist als SIP-Transport konfiguriert. KI-Outbound läuft über ElevenLabs.'
+        : 'Zadarma ist nicht konfiguriert. ZADARMA_KEY, ZADARMA_SECRET und ZADARMA_SIP_NUMBER fehlen.',
   };
 }
 
@@ -59,6 +65,35 @@ async function callZadarma(config, method, params = {}, httpMethod = 'GET') {
   return { response, body };
 }
 
+function sipIsOnline(body) {
+  const value = body?.is_online;
+  return value === true || String(value).toLowerCase() === 'true';
+}
+
+async function blockingSipForwarding(config) {
+  try {
+    const { response, body } = await callZadarma(config, '/v1/sip/redirection/', {
+      id: config.zadarma.sipNumber,
+    });
+    if (!response.ok || String(body?.status || '').toLowerCase() !== 'success') return null;
+    const entries = Array.isArray(body?.info) ? body.info : [];
+    const always = entries.find(
+      (entry) =>
+        String(entry?.sip_id || '') === String(config.zadarma.sipNumber) &&
+        String(entry?.status || '').toLowerCase() === 'on' &&
+        String(entry?.condition || '').toLowerCase() === 'always',
+    );
+    if (!always) return null;
+    return {
+      code: 'ZADARMA_SIP_FORWARDED',
+      message:
+        'Zadarma leitet die SIP-Nummer unbedingt weiter. Der Callback würde das Ziel statt den Agenten anrufen. Bitte die Rufweiterleitung im Zadarma-Portal deaktivieren.',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function checkZadarma(config) {
   if (!zadarmaConfigured(config)) {
     return {
@@ -84,17 +119,58 @@ export async function checkZadarma(config) {
       };
     }
     const providerStatus = String(body?.status || '').toLowerCase();
-    if (providerStatus === 'success') {
+    if (providerStatus !== 'success') {
       return {
-        status: 'ok',
-        message: 'Zadarma-API ist erreichbar.',
-        verified: true,
+        status: 'error',
+        message: body?.message ? String(body.message).slice(0, 200) : 'Zadarma meldet einen Fehler.',
+        verified: false,
+      };
+    }
+
+    const sip = await callZadarma(
+      config,
+      `/v1/sip/${encodeURIComponent(config.zadarma.sipNumber)}/status/`,
+    );
+    if (sip.response.status === 401 || sip.response.status === 403) {
+      return {
+        status: 'error',
+        message: 'Zadarma hat die Zugangsdaten für die SIP-Statusabfrage abgelehnt.',
+        verified: false,
+        sipOnline: null,
+      };
+    }
+    if (!sip.response.ok) {
+      return {
+        status: 'error',
+        message: `Zadarma-SIP-Status antwortet mit HTTP ${sip.response.status}.`,
+        verified: false,
+        sipOnline: null,
+      };
+    }
+    const sipStatus = String(sip.body?.status || '').toLowerCase();
+    if (sipStatus !== 'success') {
+      return {
+        status: 'error',
+        message: sip.body?.message
+          ? String(sip.body.message).slice(0, 200)
+          : 'Zadarma konnte den SIP-Status nicht ermitteln.',
+        verified: false,
+        sipOnline: null,
+      };
+    }
+    if (!sipIsOnline(sip.body)) {
+      return {
+        status: 'error',
+        message: 'Zadarma-API ist erreichbar, aber die SIP-Nummer ist offline.',
+        verified: false,
+        sipOnline: false,
       };
     }
     return {
-      status: 'error',
-      message: body?.message ? String(body.message).slice(0, 200) : 'Zadarma meldet einen Fehler.',
-      verified: false,
+      status: 'ok',
+      message: 'Zadarma-API ist erreichbar; die SIP-Nummer ist online.',
+      verified: true,
+      sipOnline: true,
     };
   } catch (error) {
     const timeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
@@ -109,29 +185,50 @@ export async function checkZadarma(config) {
 }
 
 export async function startZadarmaCallback(config, { to }) {
+  if (config.previewMode) {
+    const error = new Error('Diese Instanz läuft im Preview-Modus. Echte Anrufe sind gesperrt.');
+    error.code = 'PREVIEW_CALLS_DISABLED';
+    throw error;
+  }
   if (!zadarmaConfigured(config)) {
     const error = new Error('Zadarma ist nicht konfiguriert.');
     error.code = 'ZADARMA_NOT_CONFIGURED';
     throw error;
   }
-  if (!config.zadarma.allowLiveCalls) {
+  if (!liveCallsEnabled(config)) {
     const error = new Error('Live-Anrufe sind gesperrt.');
     error.code = 'LIVE_CALLS_DISABLED';
     throw error;
   }
+  let target;
+  try {
+    target = normalizePhoneNumber(to);
+  } catch (error) {
+    const invalid = new Error(error.message);
+    invalid.code = 'INVALID_PHONE';
+    throw invalid;
+  }
+  const forwarding = await blockingSipForwarding(config);
+  if (forwarding) {
+    const error = new Error(forwarding.message);
+    error.code = forwarding.code;
+    throw error;
+  }
   const params = {
     from: config.zadarma.sipNumber,
-    to,
+    to: target,
     sip: config.zadarma.sipNumber,
   };
-  const { response, body } = await callZadarma(config, '/v1/request/callback/', params, 'POST');
+  const { response, body } = await callZadarma(config, '/v1/request/callback/', params);
   if (!response.ok || String(body?.status || '').toLowerCase() !== 'success') {
+    const providerMessage = sanitizeProviderMessage(body?.message, target);
     const error = new Error(
-      body?.message
-        ? `Zadarma: ${String(body.message).slice(0, 200)}`
+      providerMessage
+        ? `Zadarma: ${providerMessage}`
         : 'Zadarma konnte den Anruf nicht starten.',
     );
     error.code = 'ZADARMA_CALL_FAILED';
+    error.providerHttpStatus = response.status;
     throw error;
   }
   return { providerRef: String(body?.call_id || body?.request_id || '') };

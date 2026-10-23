@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { ensureDataDir, loadConfig } from './config.js';
 import { openDatabase } from './db.js';
+import { ensureOwnerAccount } from './bootstrap.js';
+import { initializeSecretStore } from './secrets.js';
 import {
   cleanupExpiredSessions,
   createLoginRateLimiter,
@@ -23,7 +25,21 @@ import { assistantRouter } from './routes/assistant.js';
 
 export function createApp(options = {}) {
   const config = ensureDataDir(options.config ?? loadConfig(options.configOverrides));
-  const db = openDatabase(config);
+  let db;
+  let bootstrap;
+  let secretStore;
+  try {
+    db = openDatabase(config);
+    secretStore = initializeSecretStore(config, db);
+    bootstrap = ensureOwnerAccount(db, config);
+  } catch (error) {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close errors during a failed startup.
+    }
+    throw error;
+  }
   const rateLimiter = createLoginRateLimiter();
   const app = express();
 
@@ -136,5 +152,5 @@ export function createApp(options = {}) {
     db.close();
   }
 
-  return { app, db, config, close };
+  return { app, db, config, bootstrap, secretStore, close };
 }
